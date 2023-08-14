@@ -1,0 +1,6 @@
+../Core/Src/bme280_support.c:136:5:bme280_data_readout_template	80	static
+../Core/Src/bme280_support.c:300:4:I2C_routine	4	static
+../Core/Src/bme280_support.c:320:4:SPI_routine	8	static
+../Core/Src/bme280_support.c:429:4:BME280_SPI_bus_read	88	static
+../Core/Src/bme280_support.c:466:4:BME280_SPI_bus_write	80	static
+../Core/Src/bme280_support.c:498:6:BME280_delay_msek	16	static
