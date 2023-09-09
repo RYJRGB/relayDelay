@@ -24,6 +24,8 @@
 /* USER CODE BEGIN Includes */
 #include "usbd_cdc_if.h"
 #include "bme280.h"
+#include <stdio.h>
+#include <stdbool.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -33,32 +35,37 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define RELAY_HIGH GPIO_PIN_15
-#define RELAY_LOW GPIO_PIN_14
-#define RELAY_PRECHARGE GPIO_PIN_12
-#define RELAY_CHARGE_EN GPIO_PIN_13
-#define LED_PIN GPIO_PIN_13
-#define RELAY_BUS GPIOB
-#define LED_BUS GPIOC
+#define RELAY_HIGH 				GPIO_PIN_15
+#define RELAY_LOW 				GPIO_PIN_14
+#define RELAY_PRECHARGE 		GPIO_PIN_12
+#define RELAY_CHARGE_EN 		GPIO_PIN_13
+#define LED_PIN 				GPIO_PIN_13
+#define RELAY_BUS 				GPIOB
+#define LED_BUS 				GPIOC
 
-//input pins from BMS open drain (active low)
-#define CH_EN GPIO_PIN_5 //charge enable pin PB5
-#define DSC_EN GPIO_PIN_6 //discharge enable pin PB6
-#define SP_EN GPIO_PIN_7 //spare enable pin PB7
-#define EN_INPUT_BUS GPIOB
+//input pins from BMS and Antisafe
+#define ANTISAFE_PIN			GPIO_PIN_3 //antisafe button PB3 pulled up
+#define CH_EN 					GPIO_PIN_5 //charge enable pin PB5
+#define DSC_EN 					GPIO_PIN_6 //discharge enable pin PB6
+#define SP_EN 					GPIO_PIN_7 //spare enable pin PB7
+#define EN_INPUT_BUS 			GPIOB
 
+#define HEATER_EN				GPIO_PIN_1
+#define MOTOR_FAN_EN			GPIO_PIN_2
+#define SPARE_HV_EN				GPIO_PIN_3
+#define MOTOR_FAN_EN_BUS		GPIOA
 
-#define PRECHARGE_DURATION 5000
-#define RELAY_DELAY 1000
+#define PRECHARGE_DURATION 		5000
+#define RELAY_DELAY 			1000
 
-#define BME280_SPI_CS_PIN    GPIO_PIN_8 // PA8
-#define BME280_SPI_CS_PORT   GPIOA      //
+#define BME280_SPI_CS_PIN   	GPIO_PIN_8 // PA8
+#define BME280_SPI_CS_PORT  	GPIOA      //
 
-#define ADE7912_SPI_CS_PIN    GPIO_PIN_4 // PA4
-#define ADE7912_SPI_CS_PORT   GPIOA      //
+#define ADE7912_SPI_CS_PIN  	GPIO_PIN_4 // PA4
+#define ADE7912_SPI_CS_PORT   	GPIOA      //
 
-#define RS485DR_PIN		GPIO_PIN_4 //pb4
-#define RS485DR_PORT	 GPIOB
+#define RS485DR_PIN				GPIO_PIN_4 //pb4
+#define RS485DR_PORT	 		GPIOB
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -72,8 +79,13 @@ SPI_HandleTypeDef hspi1;
 UART_HandleTypeDef huart1;
 
 /* USER CODE BEGIN PV */
-uint8_t OUTPUT_BOOL = 0;
-
+//uint8_t OUTPUT_BOOL = 0;
+typedef struct {
+    bool chargeEnabled;
+    bool dischargeEnabled;
+    bool chargerDetected;
+    bool antisafeEnabled;
+} InputData;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -83,6 +95,55 @@ static void MX_SPI1_Init(void);
 static void MX_USART1_UART_Init(void);
 /* USER CODE BEGIN PFP */
 
+// Read PMB input states and create boolean struct plus debounce
+InputData readInputs(void) {
+    static int counter_chargeEnabled = 0;
+    static int counter_dischargeEnabled = 0;
+    static int counter_chargerDetected = 0;
+    static int counter_antisafeEnabled = 0;
+
+    InputData data;
+
+    // Simulating the GPIO pins for each field for demonstration.
+    int pin_chargeEnabled = 1;
+    int pin_dischargeEnabled = 2;
+    int pin_chargerDetected = 3;
+    int pin_antisafeEnabled = 4;
+
+    // Read for chargeEnabled
+    if(HAL_GPIO_ReadPin(EN_INPUT_BUS, CH_EN) == false) { //if PB5 CH_EN low
+			data.chargeEnabled = true;
+	}
+	else{
+		data.chargeEnabled = false;
+	}
+
+    // Read for dischargeEnabled
+    if(HAL_GPIO_ReadPin(EN_INPUT_BUS, DSC_EN) == false) { //if PB6 DSC_EN low
+			data.dischargeEnabled = true;
+	}
+	else{
+		data.dischargeEnabled = false;
+	}
+
+    // Read for chargerDetected
+    if(HAL_GPIO_ReadPin(EN_INPUT_BUS, SP_EN) == false) { //if SP_EN PB7 is low  (charger detected)
+            data.chargerDetected = true;
+    }
+    else{
+    	data.chargerDetected = false;
+    }
+
+    // Read for antisafeEnabled
+    if(HAL_GPIO_ReadPin(EN_INPUT_BUS, ANTISAFE_PIN) == false){ //if PB3 antisafe is low
+        data.antisafeEnabled = true;
+	}
+	else{
+		data.antisafeEnabled = false;
+	}
+
+    return data;
+}
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -123,23 +184,6 @@ int main(void)
   MX_USB_DEVICE_Init();
   /* USER CODE BEGIN 2 */
 
-//	HAL_Delay(500);
-//	HAL_GPIO_WritePin(LED_BUS, LED_PIN, SET); //turn on LED
-//
-//	HAL_GPIO_WritePin(RELAY_BUS, RELAY_LOW, SET); //turn on lower relay
-//	HAL_Delay(RELAY_DELAY); //wait
-//
-//
-//	HAL_GPIO_WritePin(RELAY_BUS, RELAY_PRECHARGE, SET); //turn on precharge
-//	HAL_Delay(PRECHARGE_DURATION); //wait for precharge duration
-//
-//	HAL_GPIO_WritePin(RELAY_BUS, RELAY_HIGH, SET); //turn on upper relay
-//	HAL_Delay(500); //wait a bit
-//	HAL_GPIO_WritePin(RELAY_BUS, RELAY_PRECHARGE, RESET); //turn off precharge
-//	HAL_Delay(1000);
-//	HAL_GPIO_WritePin(RELAY_BUS, RELAY_CHARGE_EN, SET); //turn on charger
-
-
 
   /* USER CODE END 2 */
 
@@ -147,63 +191,31 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-	  HAL_Delay(1000);
-	  HAL_GPIO_TogglePin(LED_BUS, LED_PIN);
-	  uint8_t buffer[] = "Hello, World!";
-	  CDC_Transmit_FS(buffer, sizeof(buffer));
-//	  if(OUTPUT_BOOL == 0 && RELAY_SET_FLAG == 0){//if output is disabled
-//		  HAL_GPIO_WritePin(LED_BUS, LED_PIN, RESET); //turn off LED
-//		  HAL_GPIO_WritePin(RELAY_BUS, RELAY_HIGH, RESET); //turn off high relay
-//		  HAL_GPIO_WritePin(RELAY_BUS, RELAY_LOW, RESET); //turn off low relay
-//		  HAL_GPIO_WritePin(RELAY_BUS, RELAY_CHARGE_EN, RESET); //turn off charge en
-//		  HAL_GPIO_WritePin(RELAY_BUS, RELAY_PRECHARGE, RESET); //turn off precharge
-//		  RELAY_SET_FLAG = 1;
-//	  }
-//	  else if(OUTPUT_BOOL == 1 && RELAY_SET_FLAG == 0){ //if output is enabled
-//		  if(OUTPUT_BOOL == 1){
-//			  HAL_GPIO_WritePin(LED_BUS, LED_PIN, SET); //turn on LED
-//		  }
-//		  if(OUTPUT_BOOL == 1){
-//			  HAL_Delay(RELAY_DELAY);
-//		  }
-//		  if(OUTPUT_BOOL == 1){
-//			  HAL_GPIO_WritePin(RELAY_BUS, RELAY_LOW, SET); //turn on lower relay
-//		  }
-//		  if(OUTPUT_BOOL == 1){
-//			  HAL_Delay(RELAY_DELAY); //wait
-//		  }
-//		  if(OUTPUT_BOOL == 1){
-//			  HAL_GPIO_WritePin(RELAY_BUS, RELAY_PRECHARGE, SET); //turn on precharge
-//		  }
-//		  if(OUTPUT_BOOL == 1){
-//			  HAL_Delay(PRECHARGE_DURATION); //wait for precharge duration
-//		  }
-//		  if(OUTPUT_BOOL == 1){
-//			  HAL_GPIO_WritePin(RELAY_BUS, RELAY_HIGH, SET); //turn on upper relay
-//		  }
-//		  if(OUTPUT_BOOL == 1){
-//			  HAL_GPIO_WritePin(RELAY_BUS, RELAY_PRECHARGE, RESET); //turn off precharge
-//		  }
-//		  RELAY_SET_FLAG = 1;
-//	  }
-//	  if (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_0) == RESET && OUTPUT_BOOL == 0){ //if PIN A0 is low and output is off
-//	      HAL_Delay(100);
-//		  if(HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_0) == RESET && OUTPUT_BOOL == 0){ //debounce
-//			  OUTPUT_BOOL = 1; //set output enabled
-//			  RELAY_SET_FLAG = 0;
-//	      }
-//
-//	  }
-//	  if(HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_0) == SET && OUTPUT_BOOL == 0){ //if PIN A0 is high
-//		  HAL_Delay(20);
-//		  if(HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_0) == SET && OUTPUT_BOOL == 0){ //debounce
-//			  HAL_GPIO_WritePin(RELAY_BUS, RELAY_HIGH, RESET); //turn off high relay
-//			  HAL_GPIO_WritePin(RELAY_BUS, RELAY_LOW, RESET); //turn off low relay
-//			  HAL_GPIO_WritePin(RELAY_BUS, RELAY_CHARGE_EN, RESET); //turn off charge en
-//			  HAL_GPIO_WritePin(RELAY_BUS, RELAY_PRECHARGE, RESET); //turn off precharge
-//			  OUTPUT_BOOL = 0;
-//		  }
-//	  }
+	  static int i = 0;
+	  InputData data = readInputs();
+
+
+	  if(i%10 == 0){
+		  uint8_t buffer[128] = {0}; // Initialize to zeros
+		  int length = snprintf((char *)buffer, sizeof(buffer),
+		  							"chargeEnabled: %s, "
+		  							"dischargeEnabled: %s, "
+		  							"chargerDetected: %s, "
+		  							"antisafeEnabled: %s\r\n",
+		  							data.chargeEnabled ? "true" : "false",
+		  							data.dischargeEnabled ? "true" : "false",
+		  							data.chargerDetected ? "true" : "false",
+		  							data.antisafeEnabled ? "true" : "false");
+
+		  	  CDC_Transmit_FS(buffer, length);  // Use length here
+	  }
+	  else{
+
+	  }
+
+	  i++;
+
+	  HAL_Delay(100);
 
     /* USER CODE END WHILE */
 
@@ -387,6 +399,12 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : PB3 */
+  GPIO_InitStruct.Pin = GPIO_PIN_3;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
   /*Configure GPIO pins : PB5 PB6 PB7 */
