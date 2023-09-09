@@ -97,18 +97,12 @@ static void MX_USART1_UART_Init(void);
 
 // Read PMB input states and create boolean struct plus debounce
 InputData readInputs(void) {
-    static int counter_chargeEnabled = 0;
-    static int counter_dischargeEnabled = 0;
-    static int counter_chargerDetected = 0;
-    static int counter_antisafeEnabled = 0;
+
 
     InputData data;
 
     // Simulating the GPIO pins for each field for demonstration.
-    int pin_chargeEnabled = 1;
-    int pin_dischargeEnabled = 2;
-    int pin_chargerDetected = 3;
-    int pin_antisafeEnabled = 4;
+
 
     // Read for chargeEnabled
     if(HAL_GPIO_ReadPin(EN_INPUT_BUS, CH_EN) == false) { //if PB5 CH_EN low
