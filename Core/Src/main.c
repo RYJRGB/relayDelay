@@ -35,10 +35,21 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+#define IDLE_STATE				0		//startup not pre-charged
+#define DRIVE_STATE				1		//post charged DSC and CHG EN
+#define CHARGE_STATE			2		//DSC disabled, CHARGE_DETECTED true
+#define FAULT_STATE				3		//DSC CH disabled
+
+#define DRIVE_GOOD				1
+#define DRIVE_FAULT				254
+#define CHG_GOOD				2
+#define CHG_COMPLETE			3
+#define CHG_FAULT				255
+
 #define RELAY_HIGH 				GPIO_PIN_15
 #define RELAY_LOW 				GPIO_PIN_14
 #define RELAY_PRECHARGE 		GPIO_PIN_12
-#define RELAY_CHARGE_EN 		GPIO_PIN_13
+#define RELAY_CHARGE 			GPIO_PIN_11
 #define LED_PIN 				GPIO_PIN_13
 #define RELAY_BUS 				GPIOB
 #define LED_BUS 				GPIOC
@@ -79,13 +90,24 @@ SPI_HandleTypeDef hspi1;
 UART_HandleTypeDef huart1;
 
 /* USER CODE BEGIN PV */
+
 //uint8_t OUTPUT_BOOL = 0;
 typedef struct {
     bool chargeEnabled;
     bool dischargeEnabled;
     bool chargerDetected;
     bool antisafeEnabled;
+
+    bool relayHigh;
+    bool relayLow;
+    bool relayPC;
+    bool relayCHG;
 } InputData;
+
+uint8_t currentState = IDLE_STATE;
+uint8_t status = 0;
+uint8_t prechargeFlag = 0;
+uint8_t relay_sequence = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -97,13 +119,7 @@ static void MX_USART1_UART_Init(void);
 
 // Read PMB input states and create boolean struct plus debounce
 InputData readInputs(void) {
-
-
     InputData data;
-
-    // Simulating the GPIO pins for each field for demonstration.
-
-
     // Read for chargeEnabled
     if(HAL_GPIO_ReadPin(EN_INPUT_BUS, CH_EN) == false) { //if PB5 CH_EN low
 			data.chargeEnabled = true;
@@ -136,7 +152,82 @@ InputData readInputs(void) {
 		data.antisafeEnabled = false;
 	}
 
+    // Read Relays
+    data.relayHigh = HAL_GPIO_ReadPin(RELAY_BUS, RELAY_HIGH); //output state relay high
+    data.relayLow = HAL_GPIO_ReadPin(RELAY_BUS, RELAY_LOW); //output state relay low
+    data.relayPC = HAL_GPIO_ReadPin(RELAY_BUS, RELAY_PRECHARGE); //output state relay pre-charge
+    data.relayCHG = HAL_GPIO_ReadPin(RELAY_BUS, RELAY_CHARGE); //output state relay charge
+
     return data;
+}
+
+void allRelayOff(void){
+	HAL_GPIO_WritePin(RELAY_BUS, RELAY_LOW, RESET); //turn off negative relay
+	HAL_GPIO_WritePin(RELAY_BUS, RELAY_HIGH, RESET); //turn off positive relay
+	HAL_GPIO_WritePin(RELAY_BUS, RELAY_CHARGE, RESET); //turn off charge relay
+	HAL_GPIO_WritePin(RELAY_BUS, RELAY_PRECHARGE, RESET); //turn off precharge relay
+//	HAL_GPIO_WritePin(RELAY_BUS, GPIO_PIN_0, RESET); //
+//	HAL_GPIO_WritePin(RELAY_BUS, GPIO_PIN_1, RESET); //
+//	HAL_GPIO_WritePin(RELAY_BUS, GPIO_PIN_10, RESET); //
+//	HAL_GPIO_WritePin(RELAY_BUS, GPIO_PIN_11, RESET); //
+}
+
+void allRelayOn(void){
+	HAL_GPIO_WritePin(RELAY_BUS, RELAY_LOW, SET); //turn off negative relay
+	HAL_GPIO_WritePin(RELAY_BUS, RELAY_HIGH, SET); //turn off positive relay
+	HAL_GPIO_WritePin(RELAY_BUS, RELAY_CHARGE, SET); //turn off charge relay
+	HAL_GPIO_WritePin(RELAY_BUS, RELAY_PRECHARGE, SET); //turn off precharge relay
+//	HAL_GPIO_WritePin(RELAY_BUS, GPIO_PIN_0, SET); //
+//	HAL_GPIO_WritePin(RELAY_BUS, GPIO_PIN_1, SET); //
+//	HAL_GPIO_WritePin(RELAY_BUS, GPIO_PIN_10, SET); //
+//	HAL_GPIO_WritePin(RELAY_BUS, GPIO_PIN_11, SET); //
+}
+
+
+
+void sendUSB_BMS_state(void){
+	InputData data = readInputs();
+	uint8_t buffer[128] = {0}; // Initialize to zeros
+	int length = snprintf((char *)buffer, sizeof(buffer),
+						  "CH_EN: %s, "
+						  "DSC_EN: %s, "
+						  "CH_DET: %s, "
+						  "ASAFE: %s, "
+						  "Mode: %d, "
+						  "Status: %d\r\n",
+						  data.chargeEnabled ? "true" : "false",
+						  data.dischargeEnabled ? "true" : "false",
+						  data.chargerDetected ? "true" : "false",
+						  data.antisafeEnabled ? "true" : "false",
+						  currentState, status);  // Adding the status variable here
+
+	CDC_Transmit_FS(buffer, length);  // Use length here
+}
+
+void sendUSB_Relay_State(void){
+	InputData data = readInputs();
+	uint8_t buffer[128] = {0}; // Initialize to zeros
+	int length = snprintf((char *)buffer, sizeof(buffer),
+						  "RELAY OUTPUT| POS: %s, "
+						  "NEG: %s, "
+						  "PreCharge: %s, "
+						  "CHARGE: %s\r\n",
+						  data.relayHigh ? "EN" : "DIS",
+						  data.relayLow ? "EN" : "DIS",
+						  data.relayPC ? "EN" : "DIS",
+						  data.relayCHG ? "EN" : "DIS"
+						  );
+
+	CDC_Transmit_FS(buffer, length);  // Use length here
+}
+
+void serialPrintln(const char *str) {
+    uint8_t buffer[128];  // Make sure this buffer is large enough for your messages
+    int length = snprintf((char *)buffer, sizeof(buffer), "%s\n", str);
+
+    if (length > 0) {
+        CDC_Transmit_FS(buffer, length);
+    }
 }
 /* USER CODE END PFP */
 
@@ -185,23 +276,188 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
+
+	  //0.1s loop 10Hz
 	  static int i = 0;
+	  i = 0;
+
+	  while(currentState == IDLE_STATE && i < 10){
+		  HAL_Delay(100);
+		  InputData data = readInputs();
+		  if(data.chargeEnabled && data.dischargeEnabled && !data.chargerDetected){
+			  currentState = DRIVE_STATE;
+			  serialPrintln("Drive STATE");
+			  relay_sequence = 1; //begin startup sequence
+			  i = 0;
+			  break;
+		  }
+		  if(data.chargerDetected && data.chargeEnabled){
+			  currentState = CHARGE_STATE;
+			  serialPrintln("Charge STATE");
+			  relay_sequence = 1; //begin startup sequence
+			  i = 0;
+			  break;
+		  }
+		  else{
+			  currentState = IDLE_STATE;
+			  serialPrintln("IDLE STATE");
+			  i = 0;
+		  }
+		  i++;
+
+	  }
+	  if(currentState == DRIVE_STATE && relay_sequence == 1){
+		  InputData data = readInputs();
+		  if(data.chargeEnabled && data.dischargeEnabled){
+			  HAL_GPIO_WritePin(RELAY_BUS, RELAY_LOW, SET); //turn on lower relay
+			  serialPrintln("NEG Contact Engaged");
+			  sendUSB_Relay_State();
+			  HAL_Delay(100);
+		  }
+		  else{
+			  allRelayOff();
+			  status = DRIVE_FAULT;
+			  //break;
+		  }
+		  data = readInputs();
+		  if(data.chargeEnabled && data.dischargeEnabled){
+			  HAL_GPIO_WritePin(RELAY_BUS, RELAY_PRECHARGE, SET); //turn on Precharge
+			  serialPrintln("Precharging");
+			  sendUSB_Relay_State();
+			  HAL_Delay(100);
+		  }
+		  else{
+			  allRelayOff();
+			  status = DRIVE_FAULT;
+			  break;
+		  }
+		  data = readInputs();
+		  if(data.chargeEnabled && data.dischargeEnabled){
+			  HAL_Delay(PRECHARGE_DURATION); //wait for precharge
+			  serialPrintln("Wait 5000ms");
+			  sendUSB_Relay_State();
+		  }
+		  else{
+			  allRelayOff();
+			  status = DRIVE_FAULT;
+			  break;
+		  }
+		  data = readInputs();
+		  if(data.chargeEnabled && data.dischargeEnabled){
+			  HAL_GPIO_WritePin(RELAY_BUS, RELAY_HIGH, SET); //turn on POS contactor
+			  HAL_Delay(100);
+			  HAL_GPIO_WritePin(RELAY_BUS, RELAY_PRECHARGE, RESET); //turn off Precharge
+			  serialPrintln("POS Contact Engaged");
+			  sendUSB_Relay_State();
+			  HAL_Delay(100);
+		  }
+		  else{
+			  allRelayOff();
+			  status = DRIVE_FAULT;
+			  break;
+		  }
+		  data = readInputs();
+		  if(data.chargeEnabled && data.dischargeEnabled){
+			  serialPrintln("Startup Sequence Complete");
+			  sendUSB_Relay_State();
+			  HAL_Delay(100);
+		  }
+		  else{
+			  allRelayOff();
+			  status = DRIVE_FAULT;
+			  break;
+		  }
+		  relay_sequence = 0;
+	  }
+
+	  if(currentState == CHARGE_STATE && relay_sequence == 1){
+	  		  InputData data = readInputs();
+	  		  if(data.chargeEnabled && data.chargerDetected){
+	  			  HAL_GPIO_WritePin(RELAY_BUS, RELAY_LOW, SET); //turn on lower relay
+	  			  serialPrintln("NEG Contact Engaged");
+	  			  sendUSB_Relay_State();
+	  			  HAL_Delay(100);
+	  		  }
+	  		  else{
+	  			  allRelayOff();
+	  			  status = CHG_FAULT;
+	  			  break;
+	  		  }
+
+	  		  data = readInputs();
+	  		  if(data.chargeEnabled && data.chargerDetected){
+	  			  HAL_GPIO_WritePin(RELAY_BUS, RELAY_CHARGE, SET); //turn on charge relay
+	  			  serialPrintln("CHG Relay Engaged");
+	  			  sendUSB_Relay_State();
+	  			  HAL_Delay(100);
+	  		  }
+	  		  else{
+	  			  allRelayOff();
+	  			  status = CHG_FAULT;
+	  			  break;
+	  		  }
+
+	  		  data = readInputs();
+			  if(data.chargeEnabled && data.chargerDetected){
+				  serialPrintln("Charging Sequence Complete");
+				  sendUSB_Relay_State();
+				  HAL_Delay(100);
+			  }
+			  else{
+				  allRelayOff();
+				  status = CHG_FAULT;
+				  break;
+			  }
+
+	  		  relay_sequence = 0;
+	  }
 	  InputData data = readInputs();
 
+	  //currentState = updateState();
+	  if(currentState == DRIVE_STATE){
+		  if(!(data.chargeEnabled && data.dischargeEnabled)){
+			  allRelayOff();
+			  status = DRIVE_FAULT;
+			  serialPrintln("Drive Fault");
+		  }
+		  else{
+			  status = DRIVE_GOOD;
+		  }
+	  }
+
+	  if(currentState == CHARGE_STATE){
+		  if(!data.chargeEnabled){ //charge disabled by BMS
+			  allRelayOff(); //shutdown
+			  status = CHG_FAULT;
+			  serialPrintln("CHG Fault");
+		  }
+		  if(!data.chargerDetected && data.chargeEnabled){ //done charging or unplugged but not fault
+			  allRelayOff(); //turn off all relays
+			  status = CHG_COMPLETE;
+		  }
+		  else{
+			  status = CHG_GOOD;
+		  }
+	  }
+
+	  if(currentState == CHG_COMPLETE){
+		  currentState = IDLE_STATE; //back to startup
+	  }
+
+	  if(status == CHG_FAULT || status == DRIVE_FAULT){ //if in fault state
+		  allRelayOff();
+		  HAL_Delay(5000); //wait 5000ms
+		  InputData data = readInputs(); //read the BMS states
+		  if(data.chargeEnabled && data.dischargeEnabled){ //if everything is good
+			  currentState = IDLE_STATE; //back to startup
+			  status = DRIVE_GOOD;
+		  }
+
+	  }
 
 	  if(i%10 == 0){
-		  uint8_t buffer[128] = {0}; // Initialize to zeros
-		  int length = snprintf((char *)buffer, sizeof(buffer),
-		  							"chargeEnabled: %s, "
-		  							"dischargeEnabled: %s, "
-		  							"chargerDetected: %s, "
-		  							"antisafeEnabled: %s\r\n",
-		  							data.chargeEnabled ? "true" : "false",
-		  							data.dischargeEnabled ? "true" : "false",
-		  							data.chargerDetected ? "true" : "false",
-		  							data.antisafeEnabled ? "true" : "false");
-
-		  	  CDC_Transmit_FS(buffer, length);  // Use length here
+		  sendUSB_BMS_state();
+		  sendUSB_Relay_State();
 	  }
 	  else{
 
@@ -210,6 +466,8 @@ int main(void)
 	  i++;
 
 	  HAL_Delay(100);
+	  HAL_GPIO_TogglePin(LED_BUS, LED_PIN);
+
 
     /* USER CODE END WHILE */
 
